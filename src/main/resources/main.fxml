@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.Group?>
+<?import javafx.scene.canvas.Canvas?>
+<?import javafx.scene.control.*?>
+<Group xmlns:fx="http://javafx.com/fxml" fx:controller="slstage.PhotoStageController" fx:id="root">
+  <children>
+    <MenuBar useSystemMenuBar="true">
+      <menus>
+        <Menu text="Screen">
+          <items>
+            <RadioMenuItem text="Cute" userData="0xf50570ff">
+              <toggleGroup>
+                <ToggleGroup fx:id="screen"/>
+              </toggleGroup>
+            </RadioMenuItem>
+            <RadioMenuItem text="Cool" selected="true" toggleGroup="$screen" userData="0x0069fdff"/>
+            <RadioMenuItem text="Passion" toggleGroup="$screen" userData="0xfeb300ff"/>
+          </items>
+        </Menu>
+      </menus>
+    </MenuBar>
+    <Canvas fx:id="canvas" onMousePressed="#touch" onMouseDragged="#drag"/>
+  </children>
+</Group>

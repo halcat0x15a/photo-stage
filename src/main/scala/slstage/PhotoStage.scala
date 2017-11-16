@@ -1,128 +1,126 @@
 package slstage
 
-import java.net.Socket
-import java.nio._
-import java.io._
+import java.net.URL
+import java.util.ResourceBundle
 
 import javafx.application.Application
-import javafx.concurrent._
+import javafx.concurrent.{Service, Task}
 import javafx.embed.swing.SwingFXUtils
-import javafx.scene._
-import javafx.scene.canvas._
-import javafx.scene.control._
-import javafx.scene.image._
-import javafx.scene.input.MouseButton
+import javafx.fxml.{FXML, FXMLLoader, Initializable}
+import javafx.scene.{Group, Scene}
+import javafx.scene.canvas.Canvas
+import javafx.scene.control.ToggleGroup
+import javafx.scene.image.{PixelFormat, WritableImage}
+import javafx.scene.input.{MouseButton, MouseEvent}
 import javafx.scene.paint.Color
-import javafx.stage._
+import javafx.stage.{Stage, StageStyle}
 
 import javax.imageio.ImageIO
 
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util._
+import scala.util.Success
 
-class PhotoStage extends Application {
+class PhotoStageController extends Initializable {
   val CuteColor = Color.web("0xf50570ff")
   val CoolColor = Color.web("0x0069fdff")
   val PassionColor = Color.web("0xfeb300ff")
 
-  val android = new Android
+  @FXML var root: Group = _
+  @FXML var screen: ToggleGroup = _
+  @FXML var canvas: Canvas = _
 
-  var svc: Service[Unit] = null
+  private[this] var displayInfo: DisplayInfo = null
+  private[this] var key = CoolColor
+  private[this] var xoffset = 0.0
+  private[this] var yoffset = 0.0
 
-  def start(stage: Stage): Unit = {
-    android.minicap().andThen { case Success(_) => android.open() }
-    val (width, height) = (android.GameWidth, android.GameHeight)
-    var xoffset = 0.0
-    var yoffset = 0.0
-    var key = CoolColor
-
-    val cute = new MenuItem("Cute")
-    cute.setOnAction { _ =>
-      key = CuteColor
-    }
-    val cool = new MenuItem("Cool")
-    cool.setOnAction { _ =>
-      key = CoolColor
-    }
-    val passion = new MenuItem("Passion")
-    passion.setOnAction { _ =>
-      key = PassionColor
-    }
-    val menu = new Menu("Screen")
-    menu.getItems.addAll(cute, cool, passion)
-    val menuBar = new MenuBar
-    menuBar.setUseSystemMenuBar(true)
-    menuBar.getMenus().addAll(menu)
-
-    val canvas = new Canvas(width, height)
-    val gc = canvas.getGraphicsContext2D
-    canvas.setOnMousePressed { event =>
-      event.getButton match {
-        case MouseButton.PRIMARY =>
-          android.tap(event.getSceneX.toInt, event.getSceneY.toInt)
-        case MouseButton.SECONDARY =>
-          xoffset = stage.getX - event.getScreenX
-          yoffset = stage.getY - event.getScreenY
-        case _ =>
-      }
-    }
-    canvas.setOnMouseDragged { event =>
-      event.getButton match {
-        case MouseButton.PRIMARY =>
-        case MouseButton.SECONDARY =>
-          stage.setX(event.getScreenX + xoffset)
-          stage.setY(event.getScreenY + yoffset)
-        case _ =>
-      }
-    }
-
-    val group = new Group
-    group.getChildren.addAll(menuBar, canvas)
-
-    svc = new Service[Unit] {
-      def createTask() = new Task[Unit] {
-        def call = {
-          while (!isCancelled) {
-            try {
-              if (android.isOpen) {
-                android.frame().foreach { buffered =>
-                  val image = SwingFXUtils.toFXImage(buffered, null)
-                  chromakey(image, key)
-                  gc.clearRect(0, 0, width, height)
-                  gc.drawImage(image, 0, 0)
-                }
-              } else {
-                android.open()
-              }
-            } catch {
-              case e: Throwable =>
-                e.printStackTrace
-                android.open()
-            }
-          }
+  private[this] val android = new Android
+  private[this] val renderer = new Service[Unit] {
+    def createTask() = new Task[Unit] {
+      def call = {
+        while (!isCancelled) {
+          render()
         }
       }
     }
-
-    val scene = new Scene(group)
-    scene.setFill(Color.TRANSPARENT)
-
-    stage.setTitle("PhotoStageBB")
-    stage.setScene(scene)
-    stage.setAlwaysOnTop(true)
-    stage.initStyle(StageStyle.TRANSPARENT)
-    stage.show()
-    svc.start()
   }
 
-  def chromakey(image: WritableImage, key: Color): Unit = {
-    val width = android.GameWidth
-    val height = android.GameHeight
+  def initialize(location: URL, resources: ResourceBundle): Unit = {
+    screen.selectedToggleProperty.addListener { (_, _, newValue) =>
+      if (newValue != null) {
+        key = newValue.getUserData match {
+          case "cute" => CuteColor
+          case "cool" => CoolColor
+          case "passion" => PassionColor
+        }
+      }
+    }
+  }
+
+  def touch(event: MouseEvent): Unit = {
+    val stage = root.getScene.getWindow
+    event.getButton match {
+      case MouseButton.PRIMARY =>
+        android.tap(displayInfo, event.getSceneX.toInt, event.getSceneY.toInt)
+      case MouseButton.SECONDARY =>
+        xoffset = stage.getX - event.getScreenX
+        yoffset = stage.getY - event.getScreenY
+      case _ =>
+    }
+  }
+
+  def drag(event: MouseEvent): Unit = {
+    val stage = root.getScene.getWindow
+    event.getButton match {
+      case MouseButton.PRIMARY =>
+      case MouseButton.SECONDARY =>
+        stage.setX(event.getScreenX + xoffset)
+        stage.setY(event.getScreenY + yoffset)
+      case _ =>
+    }
+  }
+
+  def open(info: DisplayInfo): Unit = {
+    displayInfo = info
+    canvas.setWidth(info.gameWidth)
+    canvas.setHeight(info.gameHeight)
+    android.minicap(displayInfo).andThen {
+      case Success(_) =>
+        android.open()
+    }
+    renderer.start()
+  }
+
+  def close(): Unit = {
+    renderer.cancel()
+    android.close()
+    android.destroy()
+  }
+
+  private[this] def render(): Unit = {
+    try {
+      if (android.isOpen) {
+        val image = SwingFXUtils.toFXImage(android.frame(displayInfo), null)
+        chromakey(image)
+        val gc = canvas.getGraphicsContext2D
+        gc.clearRect(0, 0, displayInfo.gameWidth, displayInfo.gameHeight)
+        gc.drawImage(image, 0, 0)
+      }
+    } catch {
+      case _: Throwable =>
+        android.close()
+        android.open()
+    }
+  }
+
+  private[this] def chromakey(image: WritableImage): Unit = {
+    val width = displayInfo.gameWidth
+    val height = displayInfo.gameHeight
     val length = width * height * 4
     val buffer = new Array[Byte](length)
-    val reader = image.getPixelReader
     val format = PixelFormat.getByteBgraInstance
+    val reader = image.getPixelReader
     reader.getPixels(0, 0, width, height, format, buffer, 0, width * 4)
     @tailrec def filter(i: Int): Unit = {
       if (i + 3 < length) {
@@ -142,14 +140,39 @@ class PhotoStage extends Application {
     val writer = image.getPixelWriter
     writer.setPixels(0, 0, width, height, format, buffer, 0, width * 4)
   }
+}
+
+class PhotoStage extends Application {
+  var controller: PhotoStageController = _
+
+  def start(stage: Stage): Unit = {
+    val args = getParameters.getUnnamed
+    val displayInfo = DisplayInfo(args.get(0).toInt, args.get(1).toInt, args.get(2).toInt, args.get(3).toInt)
+    val loader = new FXMLLoader(getClass.getResource("/main.fxml"))
+    val root = loader.load[Group]
+    controller = loader.getController[PhotoStageController]
+    controller.open(displayInfo)
+    val scene = new Scene(root)
+    stage.setScene(scene)
+    stage.setTitle("PhotoStage")
+    stage.setAlwaysOnTop(true)
+    scene.setFill(Color.TRANSPARENT)
+    stage.initStyle(StageStyle.TRANSPARENT)
+    stage.show()
+  }
 
   override def stop(): Unit = {
-    if (svc != null) svc.cancel()
-    android.close()
-    super.stop()
+    controller.close()
   }
 }
 
 object PhotoStage extends App {
-  Application.launch(classOf[PhotoStage])
+  val ProjectionRegex = """(\d+)x(\d+)@(\d+)x(\d+)""".r
+  args.headOption match {
+    case Some(ProjectionRegex(realWidth, realHeight, virtualWidth, virtualHeight)) =>
+      Application.launch(classOf[PhotoStage], realWidth, realHeight, virtualWidth, virtualHeight)
+    case _ =>
+      println("java -jar photo-stage.jar {RealWidth}x{RealHeight}@{VirtualWidth}x{VirtualHeight}")
+      System.exit(0)
+  }
 }

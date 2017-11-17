@@ -3,19 +3,19 @@
 <?import javafx.scene.Group?>
 <?import javafx.scene.canvas.Canvas?>
 <?import javafx.scene.control.*?>
-<Group xmlns:fx="http://javafx.com/fxml" fx:controller="slstage.PhotoStageController" fx:id="root">
+<Group xmlns:fx="http://javafx.com/fxml">
   <children>
     <MenuBar useSystemMenuBar="true">
       <menus>
         <Menu text="Screen">
           <items>
-            <RadioMenuItem text="Cute" userData="0xf50570ff">
+            <RadioMenuItem text="Cute" onAction="#cute">
               <toggleGroup>
                 <ToggleGroup fx:id="screen"/>
               </toggleGroup>
             </RadioMenuItem>
-            <RadioMenuItem text="Cool" selected="true" toggleGroup="$screen" userData="0x0069fdff"/>
-            <RadioMenuItem text="Passion" toggleGroup="$screen" userData="0xfeb300ff"/>
+            <RadioMenuItem text="Cool" selected="true" toggleGroup="$screen" onAction="#cool"/>
+            <RadioMenuItem text="Passion" toggleGroup="$screen" onAction="#passion"/>
           </items>
         </Menu>
       </menus>

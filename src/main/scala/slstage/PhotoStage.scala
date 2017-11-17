@@ -1,144 +1,127 @@
 package slstage
 
-import java.net.URL
-import java.util.ResourceBundle
+import java.awt.{Color => AWTColor}
 
 import javafx.application.Application
 import javafx.concurrent.{Service, Task}
-import javafx.embed.swing.SwingFXUtils
-import javafx.fxml.{FXML, FXMLLoader, Initializable}
+import javafx.event.ActionEvent
+import javafx.fxml.{FXML, FXMLLoader}
 import javafx.scene.{Group, Scene}
 import javafx.scene.canvas.Canvas
-import javafx.scene.control.ToggleGroup
-import javafx.scene.image.{PixelFormat, WritableImage}
+import javafx.scene.image.PixelFormat
 import javafx.scene.input.{MouseButton, MouseEvent}
 import javafx.scene.paint.Color
 import javafx.stage.{Stage, StageStyle}
 
-import javax.imageio.ImageIO
-
 import scala.annotation.tailrec
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Success
+import scala.sys.process.Process
 
-class PhotoStageController extends Initializable {
-  val CuteColor = Color.web("0xf50570ff")
-  val CoolColor = Color.web("0x0069fdff")
-  val PassionColor = Color.web("0xfeb300ff")
+class PhotoStageController(stage: Stage, info: DisplayInfo) {
+  val CuteColor = new AWTColor(0xf5, 0x05, 0x70)
+  val CoolColor = new AWTColor(0x00, 0x69, 0xfd)
+  val PassionColor = new AWTColor(0xfe, 0xb3, 0x00)
 
-  @FXML var root: Group = _
-  @FXML var screen: ToggleGroup = _
   @FXML var canvas: Canvas = _
 
-  private[this] var displayInfo: DisplayInfo = null
   private[this] var key = CoolColor
-  private[this] var xoffset = 0.0
-  private[this] var yoffset = 0.0
+  private[this] var offsetX = 0.0
+  private[this] var offsetY = 0.0
 
-  private[this] val android = new Android
-  private[this] val renderer = new Service[Unit] {
-    def createTask() = new Task[Unit] {
-      def call = {
-        while (!isCancelled) {
-          render()
+  private[this] val android = new Android(info)
+  private[this] var client: Service[Unit] = _
+  private[this] var server: Process = _
+
+  @FXML def initialize(): Unit = {
+    val width = info.gameWidth
+    val height = info.gameHeight
+    canvas.setWidth(width)
+    canvas.setHeight(height)
+    client = new Service[Unit] {
+      def createTask() = new Task[Unit] {
+        def call = {
+          var sock = android.open()
+          val format = PixelFormat.getIntArgbInstance
+          val writer = canvas.getGraphicsContext2D.getPixelWriter
+          while (!isCancelled) {
+            try {
+              val buffer = chromakey(android.frame(sock))
+              writer.setPixels(0, 0, width, height, format, buffer, 0, width)
+            } catch {
+              case e: Throwable =>
+                sock.close()
+                sock = android.open()
+            }
+          }
+          sock.close()
         }
       }
+    }
+    server = android.minicap {
+      client.start()
     }
   }
 
-  def initialize(location: URL, resources: ResourceBundle): Unit = {
-    screen.selectedToggleProperty.addListener { (_, _, newValue) =>
-      if (newValue != null) {
-        key = newValue.getUserData match {
-          case "cute" => CuteColor
-          case "cool" => CoolColor
-          case "passion" => PassionColor
-        }
-      }
-    }
+  def cute(event: ActionEvent): Unit = {
+    key = CuteColor
+  }
+
+  def cool(event: ActionEvent): Unit = {
+    key = CoolColor
+  }
+
+  def passion(event: ActionEvent): Unit = {
+    key = PassionColor
   }
 
   def touch(event: MouseEvent): Unit = {
-    val stage = root.getScene.getWindow
     event.getButton match {
       case MouseButton.PRIMARY =>
-        android.tap(displayInfo, event.getSceneX.toInt, event.getSceneY.toInt)
+        android.tap(event.getSceneX.toInt, event.getSceneY.toInt)
       case MouseButton.SECONDARY =>
-        xoffset = stage.getX - event.getScreenX
-        yoffset = stage.getY - event.getScreenY
+        offsetX = stage.getX - event.getScreenX
+        offsetY = stage.getY - event.getScreenY
       case _ =>
     }
   }
 
   def drag(event: MouseEvent): Unit = {
-    val stage = root.getScene.getWindow
     event.getButton match {
       case MouseButton.PRIMARY =>
       case MouseButton.SECONDARY =>
-        stage.setX(event.getScreenX + xoffset)
-        stage.setY(event.getScreenY + yoffset)
+        stage.setX(event.getScreenX + offsetX)
+        stage.setY(event.getScreenY + offsetY)
       case _ =>
     }
   }
 
-  def open(info: DisplayInfo): Unit = {
-    displayInfo = info
-    canvas.setWidth(info.gameWidth)
-    canvas.setHeight(info.gameHeight)
-    android.minicap(displayInfo).andThen {
-      case Success(_) =>
-        android.open()
-    }
-    renderer.start()
-  }
-
   def close(): Unit = {
-    renderer.cancel()
-    android.close()
-    android.destroy()
+    try { client.cancel() } catch { case _: Throwable => }
+    try { server.destroy() } catch { case _: Throwable => }
   }
 
-  private[this] def render(): Unit = {
-    try {
-      if (android.isOpen) {
-        val image = SwingFXUtils.toFXImage(android.frame(displayInfo), null)
-        chromakey(image)
-        val gc = canvas.getGraphicsContext2D
-        gc.clearRect(0, 0, displayInfo.gameWidth, displayInfo.gameHeight)
-        gc.drawImage(image, 0, 0)
+  private[this] def chromakey(rgb: Array[Int]): Array[Int] = {
+    val width = info.gameWidth
+    val height = info.gameHeight
+    val length = width * height
+    val buffer = new Array[Int](length)
+    val threshold = 255 * 0.4
+    val red = key.getRed
+    val green = key.getGreen
+    val blue = key.getBlue
+    val offset = info.offsetY
+    var i = 0
+    while (i < length) {
+      val pixel = rgb(i + offset)
+      val b = (pixel & 0xff) - blue
+      val g = ((pixel >> 8) & 0xff) - green
+      val r = ((pixel >> 16) & 0xff) - red
+      val distance = Math.sqrt(r * r + b * b + g * g)
+      if (distance > threshold) {
+        buffer(i) = pixel | 0xff000000
       }
-    } catch {
-      case _: Throwable =>
-        android.close()
-        android.open()
+      i += 1
     }
-  }
-
-  private[this] def chromakey(image: WritableImage): Unit = {
-    val width = displayInfo.gameWidth
-    val height = displayInfo.gameHeight
-    val length = width * height * 4
-    val buffer = new Array[Byte](length)
-    val format = PixelFormat.getByteBgraInstance
-    val reader = image.getPixelReader
-    reader.getPixels(0, 0, width, height, format, buffer, 0, width * 4)
-    @tailrec def filter(i: Int): Unit = {
-      if (i + 3 < length) {
-        val b = buffer(i + 0) & 0xff
-        val g = buffer(i + 1) & 0xff
-        val r = buffer(i + 2) & 0xff
-        val distance = math.sqrt(math.pow((r.toDouble / 255) - key.getRed, 2)
-          + math.pow((g.toDouble / 255) - key.getGreen, 2)
-          + math.pow((b.toDouble / 255) - key.getBlue, 2))
-        if (distance < 0.4) {
-          buffer(i + 3) = 0
-        }
-        filter(i + 4)
-      }
-    }
-    filter(0)
-    val writer = image.getPixelWriter
-    writer.setPixels(0, 0, width, height, format, buffer, 0, width * 4)
+    buffer
   }
 }
 
@@ -147,12 +130,11 @@ class PhotoStage extends Application {
 
   def start(stage: Stage): Unit = {
     val args = getParameters.getUnnamed
-    val displayInfo = DisplayInfo(args.get(0).toInt, args.get(1).toInt, args.get(2).toInt, args.get(3).toInt)
+    val info = DisplayInfo(args.get(0).toInt, args.get(1).toInt, args.get(2).toInt, args.get(3).toInt)
+    controller = new PhotoStageController(stage, info)
     val loader = new FXMLLoader(getClass.getResource("/main.fxml"))
-    val root = loader.load[Group]
-    controller = loader.getController[PhotoStageController]
-    controller.open(displayInfo)
-    val scene = new Scene(root)
+    loader.setController(controller)
+    val scene = new Scene(loader.load[Group])
     stage.setScene(scene)
     stage.setTitle("PhotoStage")
     stage.setAlwaysOnTop(true)
@@ -172,7 +154,6 @@ object PhotoStage extends App {
     case Some(ProjectionRegex(realWidth, realHeight, virtualWidth, virtualHeight)) =>
       Application.launch(classOf[PhotoStage], realWidth, realHeight, virtualWidth, virtualHeight)
     case _ =>
-      println("java -jar photo-stage.jar {RealWidth}x{RealHeight}@{VirtualWidth}x{VirtualHeight}")
-      System.exit(0)
+      Application.launch(classOf[PhotoStage], "1080", "1920", "720", "1280")
   }
 }

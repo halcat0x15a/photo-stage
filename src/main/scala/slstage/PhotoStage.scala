@@ -39,18 +39,12 @@ class PhotoStageController(stage: Stage, info: DisplayInfo) {
     client = new Service[Unit] {
       def createTask() = new Task[Unit] {
         def call = {
-          var sock = android.open()
+          val sock = android.open()
           val format = PixelFormat.getIntArgbInstance
           val writer = canvas.getGraphicsContext2D.getPixelWriter
           while (!isCancelled) {
-            try {
-              val buffer = chromakey(android.frame(sock))
-              writer.setPixels(0, 0, width, height, format, buffer, 0, width)
-            } catch {
-              case e: Throwable =>
-                sock.close()
-                sock = android.open()
-            }
+            val buffer = chromakey(android.frame(sock))
+            writer.setPixels(0, 0, width, height, format, buffer, 0, width)
           }
           sock.close()
         }
@@ -100,9 +94,7 @@ class PhotoStageController(stage: Stage, info: DisplayInfo) {
   }
 
   private[this] def chromakey(rgb: Array[Int]): Array[Int] = {
-    val width = info.gameWidth
-    val height = info.gameHeight
-    val length = width * height
+    val length = info.gameWidth * info.gameHeight
     val buffer = new Array[Int](length)
     val threshold = 255 * 0.4
     val red = key.getRed
